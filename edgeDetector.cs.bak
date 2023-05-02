@@ -1,0 +1,164 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Foundation.Classifier {
+    public class VectorEdgeEndDate {
+
+        public const double MINIMUM_CONTRAST = 0.1;
+
+        private static double[] generateAgeDistribution(string vectorFingerprint) {
+            // get all id_scans assoc with vector:
+            var impersonals = Controller.IdScanImpersonal.getByVectorFingerprint(vectorFingerprint);
+
+            Dictionary<long, double> fingerprintByAgeAtIssuance = new Dictionary<long, double>();
+            var youngest = Double.MaxValue;
+            var oldest = Double.MinValue;
+            foreach(var impersonal in impersonals) {
+                var ageAtIssuance = (impersonal.issuance_date - impersonal.date_of_birth).TotalSeconds * Helper.DateTime.FactorSecondsToYears;
+                fingerprintByAgeAtIssuance[impersonal.id_scan_fingerprint] = ageAtIssuance;
+                if(youngest > ageAtIssuance) youngest = ageAtIssuance;
+                if(oldest < ageAtIssuance) oldest = ageAtIssuance;
+            }
+
+            var columnSize = Helper.DateTime.FactorWeekToYear;
+            var intervalSize = oldest - youngest;
+            int subintervalCount = (int)Math.Ceiling(intervalSize / columnSize);
+            var interval = new double[subintervalCount + 1];    // the cumulative ageAtIssuance of any given subinterval.
+            var subintervalCounts = new int[subintervalCount + 1]; // the amount of IDs in any given subinterval.
+
+            foreach(var impersonal in impersonals) {
+                var ageAtIssuance = fingerprintByAgeAtIssuance[impersonal.id_scan_fingerprint];
+                var subintervalIndex = (int)Math.Floor((ageAtIssuance / Helper.DateTime.FactorWeekToYear));
+                interval[subintervalIndex] += ageAtIssuance;
+            }
+
+            // alter interval into average age by dividing by respective subintervalCount
+            for(int k = 0; k < interval.Length; ++k) {
+                interval[k] /= subintervalCounts[k];
+            }
+
+            return interval;
+        }
+
+        private static (double[] interval, DateTime earliest, double intervalSize) 
+        generateIssuanceDateByAverageAge(List<Model.IdScanImpersonal> impersonals) {
+            
+            Dictionary<long, double> fingerprintByAgeAtIssuance = new Dictionary<long, double>();
+
+            var earliestIssuanceDate = Helper.DateTime.Supremum;
+            var latestIssuanceDate = Helper.DateTime.Infimum;
+
+            foreach(var impersonal in impersonals) {
+                if(earliestIssuanceDate > impersonal.issuance_date) earliestIssuanceDate = impersonal.issuance_date;
+                if(latestIssuanceDate < impersonal.issuance_date) latestIssuanceDate = impersonal.issuance_date;
+            }
+
+            var columnSize = Helper.DateTime.FactorWeekToYear;
+
+            // intervalSize in years
+            var intervalSize = (latestIssuanceDate - earliestIssuanceDate).TotalSeconds * Helper.DateTime.FactorSecondsToYears;
+
+            int subintervalCount = (int)Math.Ceiling(intervalSize / columnSize);
+            var interval = new double[subintervalCount + 1];    // the cumulative ageAtIssuance of any given subinterval.
+            var subintervalIdScanCounts = new int[subintervalCount + 1]; // the amount of IDs in any given subinterval.
+
+            foreach(var impersonal in impersonals) {
+                var ageAtIssuance = (impersonal.issuance_date - impersonal.date_of_birth).TotalSeconds * Helper.DateTime.FactorSecondsToYears;
+                var t = (impersonal.issuance_date - earliestIssuanceDate).TotalSeconds * Helper.DateTime.FactorSecondsToYears;
+                var subintervalIndex = (int)Math.Floor((t * Helper.DateTime.FactorYearToWeek));
+                interval[subintervalIndex] += ageAtIssuance;
+                subintervalIdScanCounts[subintervalIndex] += 1;
+            }
+
+            // alter interval into average age by dividing by respective subintervalCount
+            for(int k = 0; k < interval.Length; ++k) {
+                if(subintervalIdScanCounts[k] != 0)
+                    interval[k] /= subintervalIdScanCounts[k];
+            }
+            
+            return (interval, earliestIssuanceDate, intervalSize);
+        }
+
+        private static int[] generatePopulatedArrayIndexMap<T>(T[] arr) where T : IEquatable<T> {
+            var accum = new List<int>(arr.Length);
+            for (int k = 0; k < arr.Length; ++k) {
+                if (!EqualityComparer<T>.Default.Equals(arr[k], default(T))) {
+                    accum.Add(k);
+                }
+            }
+            return accum.ToArray();
+        }
+
+        public static void detectEdge_naive(Model.Vector vector) {
+            
+            // get all id_scans assoc with vector:
+            var impersonals = Controller.IdScanImpersonal.getByVectorFingerprint(vector.fingerprint);
+
+            var (interval, earliest, intervalSize) = generateIssuanceDateByAverageAge(impersonals);
+
+            if(interval.Length < 8) {
+                // can't be determined
+                return;
+            }
+
+            var arrayIndexMap = generatePopulatedArrayIndexMap(interval);
+
+            if(arrayIndexMap.Length < 8) {
+                // not enough data columns.
+                return;
+            }
+
+            var edges = new List<(int index, double contrast)>();
+
+            for(var k = 3; k < arrayIndexMap.Length - 4; ++k) {
+                var leftAccumulator  = interval[arrayIndexMap[k - 3]]
+                                     + interval[arrayIndexMap[k - 2]]
+                                     + interval[arrayIndexMap[k - 1]]
+                                     + interval[arrayIndexMap[k - 0]];
+                var rightAccumulator = interval[arrayIndexMap[k + 1]]
+                                     + interval[arrayIndexMap[k + 2]]
+                                     + interval[arrayIndexMap[k + 3]]
+                                     + interval[arrayIndexMap[k + 4]];
+
+                leftAccumulator  /= 4;
+                rightAccumulator /= 4;
+
+                var contrast = leftAccumulator - rightAccumulator;
+
+                if(MINIMUM_CONTRAST < contrast) {
+                    edges.Add((index: arrayIndexMap[k], contrast: contrast));
+                }
+            }
+
+            if(0 == edges.Count) return;
+
+            // choose the edge with the highest contrast.
+            var edge = edges.OrderByDescending( e => e.contrast).First();     
+            var deltaT = (edge.index*intervalSize)*Helper.DateTime.FactorYearsToSeconds;
+            vector.edge_end_date = earliest.AddSeconds(deltaT);
+            Console.WriteLine($"{vector.edge_end_date.ToString()} {vector.fingerprint}");
+        }
+
+        public static void execute() {
+            var db = new Model.DatabaseContext();
+
+            var count = 0;
+            var sw = new Util.Stopwatch("Chunk");
+            sw.start();
+            foreach(var vector in db.Vector) {
+                detectEdge_naive(vector);
+                if(count++ % 100 == 0) {
+                    Console.WriteLine("Saving changes... ");
+                    db.SaveChanges();
+                    Console.Write("saved.");
+                    sw.stop();
+                    sw.start();
+                }
+            }
+            sw.stop();
+        }
+    }
+}

@@ -1,0 +1,116 @@
+     public struct Foo {
+         public string bar = "";
+         public bool b = false;
+         public Foo(string bar, bool b){
+            this.bar = bar;
+            this.b = b;
+         }
+      }
+
+      public static T stuff<T>() {
+         var t = typeof(T);
+         Console.WriteLine("+++stuff");
+         var k = 0;
+         Console.WriteLine(t.FullName);
+         var fields = t.GetFields().ToList();
+         Console.WriteLine($"fields.count: {fields.Count}");
+         foreach(var field in fields) {
+            Console.WriteLine("------------------------------");
+            Console.WriteLine(field.FieldType.FullName);
+            Console.WriteLine($"field.Name: {field.Name}");
+            var dump34 = field.FieldType;
+            Type dump24 = typeof(string);
+            if(field.FieldType == dump24) {
+               Console.WriteLine("yes???");
+            }else{
+               Console.WriteLine("no!!!!!!!");
+            }
+            Console.WriteLine("------------------------------");
+         }
+
+         Console.WriteLine($"properties count: {t.GetProperties().ToList().Count}");
+
+         foreach(var property in t.GetProperties()) {
+            Console.WriteLine(k++);
+            Console.WriteLine(property.PropertyType.ToString());
+            Console.WriteLine($"property.Name: {property.Name}");
+            Console.WriteLine("------------------------------");
+         }
+         var dump = new Type[] { typeof(string), typeof(bool) };
+
+         Console.WriteLine(t.GetConstructor(dump));
+
+         var bleh = new object[] { "string", true };
+         return (T)t.GetConstructor(dump).Invoke(bleh);
+      }
+
+      public static void testFunction() {
+
+         var sqlqb = new SQLQueryBuilder();
+         var reader = SQLQueryBuilder.select<Person>("SELECT * FROM person;");
+         while(true) {
+            var person = reader.read();
+            //if(person == null) break;
+            Console.WriteLine(person);
+         }
+         
+      }      
+
+
+      public const string connectionString = "Server=localhost,1433;User Id=sa;Database=vault;Password=yourStrong(!)Password;TrustServerCertificate=yes;";
+
+      public static void Main(string[] args) {
+
+         testFunction();
+         // SQLQueryBuilder.setConnectionString(connectionString);
+         // var dump = new SQLQueryBuilder()
+         // var types = new List<Type>();
+         // types.Add(
+
+         // var foo = stuff<Foo>();
+
+         // Console.WriteLine($"foo.b: {foo.b}");
+         // Console.WriteLine($"foo.bar: {foo.bar}");
+
+         // //var dump2 = typeof(SQLQueryBuilder).GetProperties();
+
+         // var dump = TypeCode.Boolean;
+         // if(dump == TypeCode.Boolean) {
+         //    Console.WriteLine("yes");
+         // } else {
+         //    Console.WriteLine("no");
+         // }
+
+      }
+
+
+      public static void MainOld(string[] args) {
+         // const string query = @"
+         //    CREATE TABLE person (
+         //       id INT PRIMARY KEY IDENTITY(1,1)
+         //     , last_name VARCHAR(255) NOT NULL
+         //     , first_name VARCHAR(255)
+         //     , age INT
+         //    );
+         // ";
+         const string query = @"
+            SELECT * FROM person;
+            --INSERT INTO person(first_name, last_name, age) VALUES ('bleh', 'smith', 123);
+         ";
+
+         // const string query = @"
+         //    CREATE DATABASE vault;
+         // ";
+
+         using (var connection = new SqlConnection(connectionString))
+         using (SqlCommand command = new SqlCommand(query, connection)) { 
+            connection.Open();
+            //command.ExecuteNonQuery();
+            var reader = command.ExecuteReader();
+            while(reader.Read()) {
+               Console.WriteLine($"first_name: {reader.GetString(1)}, last_name: {reader.GetString(2)}, age: {reader.GetInt32(3)}");
+
+            }
+
+         }
+      }
